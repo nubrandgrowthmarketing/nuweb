@@ -2,10 +2,14 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// NUWEBSTORAGE_DATABASE_URL is the plain postgresql:// connection string from
+// the Prisma Postgres (Vercel Marketplace) storage integration. Its sibling
+// NUWEBSTORAGE_PRISMA_DATABASE_URL is a prisma+postgres:// Accelerate URL
+// that only works with the @prisma/extension-accelerate client extension -
+// not usable here, since this app uses the plain Prisma Client.
 datasource db {
-  provider  = "postgresql"
-  url       = env("NUWEBSTORAGE_PRISMA_URL")
-  directUrl = env("NUWEBSTORAGE_URL_NON_POOLING")
+  provider = "postgresql"
+  url      = env("NUWEBSTORAGE_DATABASE_URL")
 }
 
 // A single client website project moving through the agency's build pipeline.
