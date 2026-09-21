@@ -9,7 +9,8 @@ stage, preview URLs) using plain language.
 ## Stack
 
 - **Next.js (App Router) + TypeScript + Tailwind CSS**
-- **Prisma + Postgres** for data (client/project records, media, chat history)
+- **Prisma + Postgres** for data (client/project records, chat history, media metadata)
+- **Vercel Blob** for uploaded media files (images + videos)
 - **@anthropic-ai/sdk** (`claude-opus-5`) for the in-app chat/command box, with
   tool-calling so Claude can act on the project, not just talk about it
 
@@ -28,6 +29,7 @@ npm install
 cp .env.example .env
 # Fill in .env:
 #   NUWEBSTORAGE_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nuweb"
+#   BLOB_READ_WRITE_TOKEN=...  (from a Blob store in your Vercel dashboard — needed for media uploads)
 #   ANTHROPIC_API_KEY=...  (optionally GOOGLE_PLACES_API_KEY)
 npx prisma db push
 npm run dev
@@ -35,7 +37,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000), create a project, and
 work through its tabs. The right-hand chat panel talks to Claude about that
-specific project — the API key must be set for it to respond.
+specific project — the API key must be set for it to respond. The media
+gallery's upload button needs `BLOB_READ_WRITE_TOKEN` set to work.
 
 ## Deploying to Vercel
 
@@ -56,19 +59,23 @@ dashboard — no CLI needed:
    uses). Nothing else to configure. (If you use a different prefix, or a
    different storage provider with different variable names, update the
    `env(...)` name in `prisma/schema.prisma` to match before deploying.)
-3. **Add secrets**: Project Settings → Environment Variables → add
+3. **Add Blob storage**: **Storage** tab → Add → **Blob**. This sets
+   `BLOB_READ_WRITE_TOKEN` automatically — no prefix to configure, and no
+   code changes needed regardless of what it's named, since the SDK reads
+   that exact variable by default.
+4. **Add secrets**: Project Settings → Environment Variables → add
    `ANTHROPIC_API_KEY` (required for chat) and `GOOGLE_PLACES_API_KEY`
    (optional, only needed if you don't set a per-project `apiKeyRef` env var
    name instead).
-4. **Deploy** (or redeploy, if step 2/3 happened after the first build).
-5. If the build doesn't pick up `vercel-build` automatically, override the
+5. **Deploy** (or redeploy, if steps 2-4 happened after the first build).
+6. If the build doesn't pick up `vercel-build` automatically, override the
    Build Command in Project Settings → Build & Development Settings to:
    `npx prisma db push --skip-generate && next build`.
 
-**Known limitation:** uploaded media (logo/favicon gallery) is written to
-local disk (`public/uploads`), which doesn't persist on Vercel's serverless
-functions — uploads will fail or vanish in production. Swapping that route
-to Vercel Blob (or S3) is the natural fix; ask if you want that wired up.
+Media uploads (images + videos, up to 200MB) go straight from the browser to
+Vercel Blob — the app only issues an upload token and records the resulting
+URL, so it isn't subject to Vercel serverless functions' request body size
+limit.
 
 ## Data model
 
@@ -81,8 +88,9 @@ URLs), and a `ChatMessage` transcript.
 ## Feature tour
 
 - **Onboarding** (`/projects/[slug]/onboarding`) — a 4-step wizard: client
-  info, media gallery (upload + assign logo/favicon), form-submission
-  delivery settings, and Google Reviews (Place ID + sync).
+  info, media gallery (upload images/videos to Vercel Blob + assign
+  logo/favicon), form-submission delivery settings, and Google Reviews
+  (Place ID + sync).
 - **Design Direction** (`/design-direction`) — share Figma links with an
   inline embed preview.
 - **Design Review** (`/design-review`) — threaded feedback with

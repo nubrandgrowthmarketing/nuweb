@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mkdir, writeFile } from "fs/promises";
-import path from "path";
-import { randomUUID } from "crypto";
 import { db } from "@/lib/db";
 
 const ALLOWED_TYPES = new Set([
@@ -11,9 +8,11 @@ const ALLOWED_TYPES = new Set([
   "image/svg+xml",
   "image/x-icon",
   "image/vnd.microsoft.icon",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "video/ogg",
 ]);
-
-const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 export async function GET(
   _req: NextRequest,
@@ -31,6 +30,8 @@ export async function GET(
   return NextResponse.json({ media });
 }
 
+// Called by the client right after a successful direct-to-Blob upload
+// (see /media/upload) to record the asset against this project.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ slug: string }> },
@@ -41,35 +42,25 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  const formData = await req.formData().catch(() => null);
-  const file = formData?.get("file");
-  if (!file || !(file instanceof File)) {
-    return NextResponse.json({ error: "A file is required" }, { status: 400 });
-  }
-  if (!ALLOWED_TYPES.has(file.type)) {
-    return NextResponse.json({ error: `Unsupported file type: ${file.type}` }, { status: 400 });
-  }
-  if (file.size > MAX_SIZE_BYTES) {
-    return NextResponse.json({ error: "File exceeds 5MB limit" }, { status: 400 });
-  }
+  const body = await req.json().catch(() => null);
+  const url = typeof body?.url === "string" ? body.url : "";
+  const filename = typeof body?.filename === "string" ? body.filename : "upload";
+  const mimeType = typeof body?.mimeType === "string" ? body.mimeType : "";
 
-  const ext = path.extname(file.name) || "";
-  const safeName = `${randomUUID()}${ext}`;
-  const dir = path.join(process.cwd(), "public", "uploads", project.id);
-  await mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, safeName);
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(filePath, buffer);
-
-  const url = `/uploads/${project.id}/${safeName}`;
+  if (!url || !url.includes(`/media/${slug}/`)) {
+    return NextResponse.json({ error: "Invalid or missing upload url" }, { status: 400 });
+  }
+  if (!ALLOWED_TYPES.has(mimeType)) {
+    return NextResponse.json({ error: `Unsupported file type: ${mimeType}` }, { status: 400 });
+  }
 
   const media = await db.mediaAsset.create({
     data: {
       projectId: project.id,
       url,
-      filename: file.name,
-      mimeType: file.type,
-      kind: "IMAGE",
+      filename,
+      mimeType,
+      kind: mimeType.startsWith("video/") ? "VIDEO" : "IMAGE",
     },
   });
 

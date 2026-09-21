@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { unlink } from "fs/promises";
-import path from "path";
+import { del } from "@vercel/blob";
 import { db } from "@/lib/db";
 
 export async function PATCH(
@@ -23,6 +22,9 @@ export async function PATCH(
   if (assignedAs !== "logo" && assignedAs !== "favicon" && assignedAs !== null) {
     return NextResponse.json({ error: "assignedAs must be 'logo', 'favicon', or null" }, { status: 400 });
   }
+  if ((assignedAs === "logo" || assignedAs === "favicon") && asset.mimeType.startsWith("video/")) {
+    return NextResponse.json({ error: "A video can't be used as a logo or favicon" }, { status: 400 });
+  }
 
   if (assignedAs === "logo" || assignedAs === "favicon") {
     // Only one asset can hold each assignment per project.
@@ -32,11 +34,12 @@ export async function PATCH(
     });
   }
 
+  const baseKind = asset.mimeType.startsWith("video/") ? "VIDEO" : "IMAGE";
   const updated = await db.mediaAsset.update({
     where: { id: asset.id },
     data: {
       assignedAs,
-      kind: assignedAs === "logo" ? "LOGO" : assignedAs === "favicon" ? "FAVICON" : "IMAGE",
+      kind: assignedAs === "logo" ? "LOGO" : assignedAs === "favicon" ? "FAVICON" : baseKind,
     },
   });
 
@@ -72,9 +75,7 @@ export async function DELETE(
   }
 
   await db.mediaAsset.delete({ where: { id: asset.id } });
-
-  const filePath = path.join(process.cwd(), "public", asset.url.replace(/^\//, ""));
-  await unlink(filePath).catch(() => undefined);
+  await del(asset.url).catch(() => undefined);
 
   return NextResponse.json({ ok: true });
 }

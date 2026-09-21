@@ -75,6 +75,7 @@ model Onboarding {
 
 enum MediaKind {
   IMAGE
+  VIDEO
   LOGO
   FAVICON
   DOCUMENT
