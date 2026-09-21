@@ -52,6 +52,7 @@ export function MediaGalleryStep({
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
+  const fileMapRef = useRef<Map<string, File>>(new Map());
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
 
   const isUploading = uploadItems.some((it) => it.status === "queued" || it.status === "uploading" || it.status === "saving");
@@ -127,6 +128,9 @@ export function MediaGalleryStep({
       status: "queued",
       progress: 0,
     }));
+    for (let i = 0; i < files.length; i++) {
+      fileMapRef.current.set(items[i].id, files[i]);
+    }
     setUploadItems((prev) => [...prev, ...items]);
 
     const queue = files.map((file, i) => ({ file, id: items[i].id }));
@@ -144,8 +148,25 @@ export function MediaGalleryStep({
     if (fileInput.current) fileInput.current.value = "";
   }
 
+  function retryItem(id: string) {
+    const file = fileMapRef.current.get(id);
+    if (!file) return;
+    void uploadOne(file, id);
+  }
+
+  function retryAllFailed() {
+    uploadItems.filter((it) => it.status === "error").forEach((it) => retryItem(it.id));
+  }
+
   function clearFinishedUploads() {
-    setUploadItems((prev) => prev.filter((it) => it.status !== "done" && it.status !== "error"));
+    setUploadItems((prev) => {
+      const kept = prev.filter((it) => it.status !== "done" && it.status !== "error");
+      const keptIds = new Set(kept.map((it) => it.id));
+      for (const id of fileMapRef.current.keys()) {
+        if (!keptIds.has(id)) fileMapRef.current.delete(id);
+      }
+      return kept;
+    });
   }
 
   async function assign(assetId: string, role: "logo" | "favicon" | null) {
@@ -210,12 +231,22 @@ export function MediaGalleryStep({
                 : `${doneCount} added to gallery${errorCount ? `, ${errorCount} failed` : ""}`}
             </p>
             {allFinished && (
-              <button
-                onClick={clearFinishedUploads}
-                className="text-xs font-medium text-neutral-400 hover:text-neutral-600"
-              >
-                Clear
-              </button>
+              <div className="flex items-center gap-3">
+                {errorCount > 0 && (
+                  <button
+                    onClick={retryAllFailed}
+                    className="text-xs font-medium text-neutral-600 hover:text-neutral-900"
+                  >
+                    Retry {errorCount} failed
+                  </button>
+                )}
+                <button
+                  onClick={clearFinishedUploads}
+                  className="text-xs font-medium text-neutral-400 hover:text-neutral-600"
+                >
+                  Clear
+                </button>
+              </div>
             )}
           </div>
           <ul className="max-h-56 space-y-2 overflow-y-auto">
@@ -225,16 +256,26 @@ export function MediaGalleryStep({
                   <span className="truncate text-neutral-700" title={item.name}>
                     {item.name}
                   </span>
-                  <span
-                    className={`shrink-0 ${
-                      item.status === "error"
-                        ? "text-red-600"
-                        : item.status === "done"
-                          ? "text-emerald-600"
-                          : "text-neutral-400"
-                    }`}
-                  >
-                    {item.status === "error" ? item.error : STATUS_LABEL[item.status]}
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span
+                      className={
+                        item.status === "error"
+                          ? "text-red-600"
+                          : item.status === "done"
+                            ? "text-emerald-600"
+                            : "text-neutral-400"
+                      }
+                    >
+                      {item.status === "error" ? item.error : STATUS_LABEL[item.status]}
+                    </span>
+                    {item.status === "error" && (
+                      <button
+                        onClick={() => retryItem(item.id)}
+                        className="font-medium text-neutral-600 underline hover:text-neutral-900"
+                      >
+                        Retry
+                      </button>
+                    )}
                   </span>
                 </div>
                 {(item.status === "uploading" || item.status === "saving") && (
