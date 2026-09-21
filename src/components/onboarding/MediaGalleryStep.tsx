@@ -8,6 +8,34 @@ import type { MediaAsset, Onboarding } from "@prisma/client";
 
 const ACCEPTED_TYPES =
   "image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon,video/mp4,video/webm,video/quicktime,video/ogg";
+const ACCEPTED_SET = new Set(ACCEPTED_TYPES.split(","));
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200MB
+const UPLOAD_CONCURRENCY = 3;
+
+type UploadStatus = "queued" | "uploading" | "saving" | "done" | "error";
+
+type UploadItem = {
+  id: string;
+  name: string;
+  status: UploadStatus;
+  progress: number; // 0-100
+  error?: string;
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))}MB`;
+  return `${Math.round(bytes / 1024)}KB`;
+}
+
+const STATUS_LABEL: Record<UploadStatus, string> = {
+  queued: "Waiting…",
+  uploading: "Uploading…",
+  saving: "Saving…",
+  done: "Added to gallery",
+  error: "Failed",
+};
 
 export function MediaGalleryStep({
   slug,
@@ -24,54 +52,108 @@ export function MediaGalleryStep({
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
 
-  async function handleUpload(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    setError(null);
+  const isUploading = uploadItems.some((it) => it.status === "queued" || it.status === "uploading" || it.status === "saving");
 
-    for (const file of Array.from(files)) {
-      try {
-        const pathname = `media/${slug}/${crypto.randomUUID()}-${file.name}`;
-        const blob = await upload(pathname, file, {
-          access: "public",
-          handleUploadUrl: `/api/projects/${slug}/media/upload`,
-          clientPayload: JSON.stringify({ mimeType: file.type }),
-          multipart: file.size > 5 * 1024 * 1024,
-        });
+  function updateItem(id: string, patch: Partial<UploadItem>) {
+    setUploadItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
 
-        const res = await fetch(`/api/projects/${slug}/media`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: blob.url, filename: file.name, mimeType: file.type }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          setError(data.error ?? `Failed to save ${file.name}`);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : `Failed to upload ${file.name}`;
-        setError(message);
-      }
+  async function uploadOne(file: File, itemId: string) {
+    const isVideo = file.type.startsWith("video/");
+    const maxSize = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+
+    if (!ACCEPTED_SET.has(file.type)) {
+      updateItem(itemId, { status: "error", error: `Unsupported type: ${file.type || "unknown"}` });
+      return;
+    }
+    if (file.size > maxSize) {
+      updateItem(itemId, { status: "error", error: `Exceeds ${formatBytes(maxSize)} limit` });
+      return;
     }
 
-    setUploading(false);
+    updateItem(itemId, { status: "uploading", progress: 0 });
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error("Upload timed out after 10 minutes")),
+      10 * 60 * 1000,
+    );
+
+    try {
+      const pathname = `media/${slug}/${crypto.randomUUID()}-${file.name}`;
+      const blob = await upload(pathname, file, {
+        access: "public",
+        handleUploadUrl: `/api/projects/${slug}/media/upload`,
+        clientPayload: JSON.stringify({ mimeType: file.type }),
+        multipart: file.size > 5 * 1024 * 1024,
+        abortSignal: controller.signal,
+        onUploadProgress: ({ percentage }) => {
+          updateItem(itemId, { progress: Math.round(percentage) });
+        },
+      });
+      clearTimeout(timeoutId);
+
+      updateItem(itemId, { status: "saving", progress: 100 });
+
+      const res = await fetch(`/api/projects/${slug}/media`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: blob.url, filename: file.name, mimeType: file.type }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        updateItem(itemId, { status: "error", error: data.error ?? "Could not save to gallery" });
+        return;
+      }
+
+      updateItem(itemId, { status: "done" });
+      router.refresh();
+    } catch (err) {
+      clearTimeout(timeoutId);
+      const message = err instanceof Error ? err.message : "Upload failed";
+      updateItem(itemId, { status: "error", error: message });
+    }
+  }
+
+  async function handleUpload(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+
+    const items: UploadItem[] = files.map((file) => ({
+      id: crypto.randomUUID(),
+      name: file.name,
+      status: "queued",
+      progress: 0,
+    }));
+    setUploadItems((prev) => [...prev, ...items]);
+
+    const queue = files.map((file, i) => ({ file, id: items[i].id }));
+    let cursor = 0;
+    async function worker() {
+      while (cursor < queue.length) {
+        const { file, id } = queue[cursor++];
+        await uploadOne(file, id);
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queue.length) }, worker),
+    );
+
     if (fileInput.current) fileInput.current.value = "";
-    router.refresh();
+  }
+
+  function clearFinishedUploads() {
+    setUploadItems((prev) => prev.filter((it) => it.status !== "done" && it.status !== "error"));
   }
 
   async function assign(assetId: string, role: "logo" | "favicon" | null) {
-    const res = await fetch(`/api/projects/${slug}/media/${assetId}`, {
+    await fetch(`/api/projects/${slug}/media/${assetId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ assignedAs: role }),
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Could not update assignment");
-    }
     router.refresh();
   }
 
@@ -90,6 +172,10 @@ export function MediaGalleryStep({
     onNext();
   }
 
+  const allFinished = uploadItems.length > 0 && !isUploading;
+  const doneCount = uploadItems.filter((it) => it.status === "done").length;
+  const errorCount = uploadItems.filter((it) => it.status === "error").length;
+
   return (
     <div>
       <h2 className="text-lg font-semibold">Media Gallery</h2>
@@ -100,10 +186,10 @@ export function MediaGalleryStep({
 
       <label className="mt-6 flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-neutral-300 px-6 py-8 text-center hover:border-neutral-400">
         <span className="text-sm font-medium text-neutral-700">
-          {uploading ? "Uploading…" : "Click to upload images or videos"}
+          {isUploading ? "Uploading…" : "Click to upload images or videos"}
         </span>
         <span className="mt-1 text-xs text-neutral-400">
-          PNG, JPG, WEBP, SVG, ICO up to 10MB · MP4, WEBM, MOV, OGG up to 200MB
+          PNG, JPG, WEBP, SVG, ICO up to 10MB · MP4, WEBM, MOV, OGG up to 200MB · multiple files OK
         </span>
         <input
           ref={fileInput}
@@ -114,7 +200,56 @@ export function MediaGalleryStep({
           onChange={(e) => handleUpload(e.target.files)}
         />
       </label>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+
+      {uploadItems.length > 0 && (
+        <div className="mt-4 rounded-lg border border-neutral-200 bg-white p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-medium text-neutral-500">
+              {isUploading
+                ? `Uploading ${uploadItems.length} file${uploadItems.length === 1 ? "" : "s"}…`
+                : `${doneCount} added to gallery${errorCount ? `, ${errorCount} failed` : ""}`}
+            </p>
+            {allFinished && (
+              <button
+                onClick={clearFinishedUploads}
+                className="text-xs font-medium text-neutral-400 hover:text-neutral-600"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <ul className="max-h-56 space-y-2 overflow-y-auto">
+            {uploadItems.map((item) => (
+              <li key={item.id} className="text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-neutral-700" title={item.name}>
+                    {item.name}
+                  </span>
+                  <span
+                    className={`shrink-0 ${
+                      item.status === "error"
+                        ? "text-red-600"
+                        : item.status === "done"
+                          ? "text-emerald-600"
+                          : "text-neutral-400"
+                    }`}
+                  >
+                    {item.status === "error" ? item.error : STATUS_LABEL[item.status]}
+                  </span>
+                </div>
+                {(item.status === "uploading" || item.status === "saving") && (
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
+                    <div
+                      className="h-full rounded-full bg-neutral-900 transition-all"
+                      style={{ width: `${item.status === "saving" ? 100 : item.progress}%` }}
+                    />
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {media.length === 0 ? (
         <p className="mt-6 text-sm text-neutral-400">No media uploaded yet.</p>
