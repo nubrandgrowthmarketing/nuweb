@@ -51,6 +51,10 @@ export async function POST(
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
   }
 
+  await db.chatMessage.create({
+    data: { projectId: project.id, role: "USER", content: userText },
+  });
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       {
@@ -60,10 +64,6 @@ export async function POST(
       { status: 500 },
     );
   }
-
-  await db.chatMessage.create({
-    data: { projectId: project.id, role: "USER", content: userText },
-  });
 
   const history = await db.chatMessage.findMany({
     where: { projectId: project.id },
