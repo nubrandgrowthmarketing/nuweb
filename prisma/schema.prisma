@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A single client website project moving through the agency's build pipeline.
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  stage     Stage    @default(ONBOARDING)
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Onboarding
+  onboarding       Onboarding?
+  mediaAssets      MediaAsset[]
+  formIntegration  FormIntegration?
+  reviewsIntegration GoogleReviewsIntegration?
+
+  // Design
+  designLinks   DesignLink[]
+  designReviews DesignReview[]
+
+  // Previews
+  previews PreviewLink[]
+
+  // AI assistant
+  chatMessages ChatMessage[]
+}
+
+enum Stage {
+  ONBOARDING
+  DESIGN_DIRECTION
+  DESIGN_REVIEW
+  AI_PREVIEW
+  LIVE_PREVIEW
+  LAUNCHED
+}
+
+// Client/business intake info gathered during onboarding.
+model Onboarding {
+  id        String  @id @default(cuid())
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String  @unique
+
+  // Client info
+  businessName    String?
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  websiteGoals    String?
+  targetAudience  String?
+  brandVoice      String?
+  competitors     String?
+  additionalNotes String?
+
+  logoAssetId    String?
+  faviconAssetId String?
+
+  step      Int      @default(1)
+  completed Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+enum MediaKind {
+  IMAGE
+  LOGO
+  FAVICON
+  DOCUMENT
+  OTHER
+}
+
+// Gallery of uploaded media a client's assets are chosen from.
+model MediaAsset {
+  id         String    @id @default(cuid())
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId  String
+  url        String
+  filename   String
+  mimeType   String
+  kind       MediaKind @default(IMAGE)
+  assignedAs String? // "logo" | "favicon" | null
+  createdAt  DateTime  @default(now())
+}
+
+// Figma mockup links shared as part of design direction.
+model DesignLink {
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  title     String
+  figmaUrl  String
+  notes     String?
+  createdAt DateTime @default(now())
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+// Feedback/annotations captured during the design review tab.
+model DesignReview {
+  id         String       @id @default(cuid())
+  project    Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId  String
+  author     String       @default("Agency")
+  comment    String
+  status     ReviewStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+}
+
+enum PreviewKind {
+  AI_PREVIEW
+  LIVE_PREVIEW
+}
+
+// URLs for the AI-generated preview and the live working preview tabs.
+model PreviewLink {
+  id        String      @id @default(cuid())
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  kind      PreviewKind
+  url       String
+  label     String?
+  createdAt DateTime    @default(now())
+}
+
+// Config for where the client's website form submissions should be sent.
+model FormIntegration {
+  id           String   @id @default(cuid())
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId    String   @unique
+  provider     String   @default("webhook") // webhook | email | zapier | other
+  destination  String // webhook URL or notification email
+  fieldMapping String? // JSON string describing form field -> destination mapping
+  isActive     Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+}
+
+// Config + cache for pulling Google reviews from a Business Profile listing.
+model GoogleReviewsIntegration {
+  id             String    @id @default(cuid())
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId      String    @unique
+  placeId        String?
+  listingUrl     String?
+  apiKeyRef      String? // name of the env var / secret holding the API key, never the key itself
+  autoSync       Boolean   @default(false)
+  lastSyncedAt   DateTime?
+  cachedReviews  String? // JSON string of the last fetched reviews payload
+  updatedAt      DateTime  @updatedAt
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+// Persisted transcript for the per-project "direct Claude" command box.
+model ChatMessage {
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  role      ChatRole
+  content   String
+  createdAt DateTime @default(now())
+}
