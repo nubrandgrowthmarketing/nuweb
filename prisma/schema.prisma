@@ -4,8 +4,8 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("POSTGRES_URL_NON_POOLING")
+  url       = env("NUWEBSTORAGE_PRISMA_URL")
+  directUrl = env("NUWEBSTORAGE_URL_NON_POOLING")
 }
 
 // A single client website project moving through the agency's build pipeline.

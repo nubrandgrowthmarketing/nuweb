@@ -27,8 +27,8 @@ Then:
 npm install
 cp .env.example .env
 # Fill in .env:
-#   DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nuweb"
-#   POSTGRES_URL_NON_POOLING="postgresql://postgres:postgres@localhost:5432/nuweb"
+#   NUWEBSTORAGE_PRISMA_URL="postgresql://postgres:postgres@localhost:5432/nuweb"
+#   NUWEBSTORAGE_URL_NON_POOLING="postgresql://postgres:postgres@localhost:5432/nuweb"
 #   ANTHROPIC_API_KEY=...  (optionally GOOGLE_PLACES_API_KEY)
 npx prisma db push
 npm run dev
@@ -49,9 +49,11 @@ dashboard — no CLI needed:
    rather than `main`, set it as the Production Branch under Project
    Settings → Git (or open a PR and merge to `main` first).
 2. **Add Postgres**: in the new project, go to the **Storage** tab → Add →
-   **Postgres** (Neon). This auto-populates `DATABASE_URL` and
-   `POSTGRES_URL_NON_POOLING` (among others) as project env vars — nothing
-   else to configure.
+   **Postgres** (Neon), using environment variable prefix `NUWEBSTORAGE`.
+   This auto-populates `NUWEBSTORAGE_PRISMA_URL`, `NUWEBSTORAGE_URL_NON_POOLING`
+   (among others) as project env vars — nothing else to configure. (If you
+   use a different prefix, update the `env(...)` names in
+   `prisma/schema.prisma` to match before deploying.)
 3. **Add secrets**: Project Settings → Environment Variables → add
    `ANTHROPIC_API_KEY` (required for chat) and `GOOGLE_PLACES_API_KEY`
    (optional, only needed if you don't set a per-project `apiKeyRef` env var
