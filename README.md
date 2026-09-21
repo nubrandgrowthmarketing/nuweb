@@ -9,22 +9,62 @@ stage, preview URLs) using plain language.
 ## Stack
 
 - **Next.js (App Router) + TypeScript + Tailwind CSS**
-- **Prisma + SQLite** for local data (client/project records, media, chat history)
+- **Prisma + Postgres** for data (client/project records, media, chat history)
 - **@anthropic-ai/sdk** (`claude-opus-5`) for the in-app chat/command box, with
   tool-calling so Claude can act on the project, not just talk about it
 
-## Getting started
+## Getting started (local dev)
+
+You need a Postgres instance — the quickest is a throwaway Docker container:
+
+```bash
+docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres --name nuweb-db postgres
+```
+
+Then:
 
 ```bash
 npm install
-cp .env.example .env   # then fill in ANTHROPIC_API_KEY (and optionally GOOGLE_PLACES_API_KEY)
-npx prisma migrate deploy
+cp .env.example .env
+# Fill in .env:
+#   DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nuweb"
+#   POSTGRES_URL_NON_POOLING="postgresql://postgres:postgres@localhost:5432/nuweb"
+#   ANTHROPIC_API_KEY=...  (optionally GOOGLE_PLACES_API_KEY)
+npx prisma db push
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000), create a project, and
-work through its tabs. The bottom-right/right-hand chat panel talks to Claude
-about that specific project — the API key must be set for it to respond.
+work through its tabs. The right-hand chat panel talks to Claude about that
+specific project — the API key must be set for it to respond.
+
+## Deploying to Vercel
+
+The build is already wired for it (`postinstall: prisma generate`,
+`vercel-build: prisma db push && next build`). Steps, all in the Vercel
+dashboard — no CLI needed:
+
+1. **Import the repo**: [vercel.com/new](https://vercel.com/new) → import
+   this GitHub repo. If you're deploying straight from a feature branch
+   rather than `main`, set it as the Production Branch under Project
+   Settings → Git (or open a PR and merge to `main` first).
+2. **Add Postgres**: in the new project, go to the **Storage** tab → Add →
+   **Postgres** (Neon). This auto-populates `DATABASE_URL` and
+   `POSTGRES_URL_NON_POOLING` (among others) as project env vars — nothing
+   else to configure.
+3. **Add secrets**: Project Settings → Environment Variables → add
+   `ANTHROPIC_API_KEY` (required for chat) and `GOOGLE_PLACES_API_KEY`
+   (optional, only needed if you don't set a per-project `apiKeyRef` env var
+   name instead).
+4. **Deploy** (or redeploy, if step 2/3 happened after the first build).
+5. If the build doesn't pick up `vercel-build` automatically, override the
+   Build Command in Project Settings → Build & Development Settings to:
+   `npx prisma db push --skip-generate && next build`.
+
+**Known limitation:** uploaded media (logo/favicon gallery) is written to
+local disk (`public/uploads`), which doesn't persist on Vercel's serverless
+functions — uploads will fail or vanish in production. Swapping that route
+to Vercel Blob (or S3) is the natural fix; ask if you want that wired up.
 
 ## Data model
 
