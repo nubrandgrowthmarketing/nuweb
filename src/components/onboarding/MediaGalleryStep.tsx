@@ -85,7 +85,7 @@ export function MediaGalleryStep({
     try {
       const pathname = `media/${slug}/${crypto.randomUUID()}-${file.name}`;
       const blob = await upload(pathname, file, {
-        access: "public",
+        access: "private",
         handleUploadUrl: `/api/projects/${slug}/media/upload`,
         clientPayload: JSON.stringify({ mimeType: file.type }),
         multipart: file.size > 5 * 1024 * 1024,
@@ -300,14 +300,15 @@ export function MediaGalleryStep({
             const isVideo = asset.mimeType.startsWith("video/");
             const isLogo = onboarding?.logoAssetId === asset.id || asset.assignedAs === "logo";
             const isFavicon = onboarding?.faviconAssetId === asset.id || asset.assignedAs === "favicon";
+            const fileUrl = `/api/projects/${slug}/media/${asset.id}/file`;
             return (
               <li key={asset.id} className="rounded-lg border border-neutral-200 p-2">
                 <div className="relative flex h-24 items-center justify-center overflow-hidden rounded bg-neutral-50">
                   {isVideo ? (
-                    <video src={asset.url} className="h-full w-full object-contain" controls muted />
+                    <video src={fileUrl} className="h-full w-full object-contain" controls muted />
                   ) : (
                     <Image
-                      src={asset.url}
+                      src={fileUrl}
                       alt={asset.filename}
                       fill
                       sizes="150px"
